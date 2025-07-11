@@ -388,4 +388,11 @@ def main_workflow():
     run_flask_app()
 
 if __name__ == '__main__':
-    main_workflow()
+    # This allows the GitHub Actions workflow to generate the diagram as a build artifact
+    # without running the entire data scraping process.
+    if len(sys.argv) > 1 and sys.argv[1] == '--generate-diagram-only':
+        print("Generating workflow diagram for build artifact...")
+        generate_workflow_diagram()
+        print("Diagram 'Workflow_Diagram.png' generated successfully.")
+    else:
+        main_workflow()
