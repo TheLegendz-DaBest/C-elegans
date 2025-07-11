@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Add New Study</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 2em; background-color: #f4f4f9; color: #333; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 2em; box-shadow: 0 2px 15px rgba(0,0,0,0.1); border-radius: 8px; }
+        h1 { color: #2c3e50; }
+        form { display: flex; flex-direction: column; gap: 10px; }
+        label { font-weight: bold; margin-top: 10px; }
+        input, textarea, select { padding: 10px; font-size: 1em; border: 1px solid #ccc; border-radius: 4px; }
+        input[type="submit"] { background-color: #3498db; color: white; border: none; cursor: pointer; font-weight: bold; padding: 12px; }
+        input[type="submit"]:hover { background-color: #2980b9; }
+        .back-link { display: block; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Add a New Study Manually</h1>
+        <form action="/add_study" method="post">
+            <label for="title">Title:</label>
+            <input type="text" id="title" name="title" required>
+            
+            <label for="authors">Authors (comma-separated):</label>
+            <input type="text" id="authors" name="authors">
+            
+            <label for="publication_date">Publication Date (e.g., YYYY-MM-DD):</label>
+            <input type="text" id="publication_date" name="publication_date">
+            
+            <label for="source">Source (e.g., Journal Name, Website):</label>
+            <input type="text" id="source" name="source" required>
+            
+            <label for="url">URL:</label>
+            <input type="url" id="url" name="url" required>
+            
+            <label for="abstract">Abstract / Summary:</label>
+            <textarea id="abstract" name="abstract" rows="6"></textarea>
+            
+            <label for="citations">Citations:</label>
+            <input type="number" id="citations" name="citations" value="0">
+            
+            <label for="study_type">Study Type:</label>
+            <input type="text" id="study_type" name="study_type" value="Publication">
+            
+            <label for="topic">Topic (e.g., Aging & Longevity):</label>
+            <input type="text" id="topic" name="topic" required>
+            
+            <input type="submit" value="Add Study">
+        </form>
+        <a href="/" class="back-link">← Back to Database</a>
+    </div>
+</body>
+</html>
