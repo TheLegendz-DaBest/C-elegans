@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>C. elegans Research Database</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; background-color: #f4f4f9; color: #333; }
+        h1, h2, h3 { color: #2c3e50; }
+        h1 { text-align: center; margin-top: 1em; }
+        h2 { border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 2em; }
+        h3 { color: #34495e; margin-top: 1.5em; }
+        .container { max-width: 1200px; margin: auto; background: white; padding: 1em 2em 2em 2em; box-shadow: 0 2px 15px rgba(0,0,0,0.1); border-radius: 8px; }
+        .topic-section { margin-bottom: 2em; }
+        .entry { border-bottom: 1px solid #ecf0f1; padding: 15px 5px; }
+        .entry:last-child { border-bottom: none; }
+        .entry-title { font-size: 1.1em; font-weight: 600; }
+        .entry-meta { font-size: 0.9em; color: #7f8c8d; margin-top: 5px; }
+        .entry-meta strong { color: #555; }
+        .entry-abstract { font-size: 0.95em; margin-top: 8px; color: #555; line-height: 1.5; }
+        a { color: #2980b9; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .add-button { display: inline-block; margin: 20px 0; padding: 12px 20px; background-color: #2ecc71; color: white; border-radius: 5px; text-align: center; font-weight: bold; }
+        .add-button:hover { background-color: #27ae60; }
+        .empty-state { color: #95a5a6; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>C. elegans Research Database</h1>
+        <a href="/add_study" class="add-button">Manually Add Study or Publication</a>
+        
+        {% for topic in all_topics %}
+        <div class="topic-section">
+            <h2>{{ topic }}</h2>
+            
+            <h3>Scientific Publications</h3>
+            {% set studies_found = grouped_studies[topic] %}
+            {% if studies_found %}
+                {% for study in studies_found %}
+                <div class="entry">
+                    <div class="entry-title"><a href="{{ study.url }}" target="_blank" rel="noopener noreferrer">{{ study.title }}</a></div>
+                    <div class="entry-meta">
+                        <strong>Authors:</strong> {{ study.authors or 'N/A' }}<br>
+                        <strong>Date:</strong> {{ study.publication_date or 'N/A' }} | <strong>Source:</strong> {{ study.source }} | <strong>Citations:</strong> {{ study.citations }}
+                    </div>
+                    {% if study.abstract and study.abstract != 'None' %}
+                    <details>
+                        <summary style="cursor: pointer; font-size: 0.9em; color: #3498db;">Show Abstract</summary>
+                        <div class="entry-abstract">{{ study.abstract[:400] }}{% if study.abstract|length > 400 %}...{% endif %}</div>
+                    </details>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="empty-state">No publications found for this topic.</p>
+            {% endif %}
+
+            <h3>Expert Opinions & News</h3>
+            {% set opinions_found = grouped_opinions[topic] %}
+            {% if opinions_found %}
+                {% for opinion in opinions_found %}
+                <div class="entry">
+                    <div class="entry-title"><a href="{{ opinion.url }}" target="_blank" rel="noopener noreferrer">{{ opinion.title }}</a></div>
+                    <div class="entry-meta">
+                        <strong>Author/Source:</strong> {{ opinion.author or opinion.source }}<br>
+                        <strong>Date:</strong> {{ opinion.published_date or 'N/A' }}
+                    </div>
+                    {% if opinion.summary and opinion.summary != 'None' %}
+                    <div class="entry-abstract">{{ opinion.summary }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="empty-state">No news or opinions found for this topic.</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
