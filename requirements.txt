@@ -9,3 +9,4 @@ newsapi-python
 graphviz
 yt-dlp
 pyinstaller
+fake-useragent
