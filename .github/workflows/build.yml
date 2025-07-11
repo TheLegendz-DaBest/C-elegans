@@ -54,23 +54,16 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # BUILD-TIME STEP: Generate the static workflow diagram BEFORE building.
-    # This creates the PNG file needed for the --add-data flag below.
     - name: Generate Workflow Diagram
       run: python local_app.py --generate-diagram-only
 
-    # BUILD-TIME STEP: Build the application executable.
-    # This bundles the script, templates, the diagram, and all dependencies.
-    # The hook correctly bundles the 'fake_useragent' data to prevent crashes.
+    # BUILD-TIME STEP: Build the executable with PyInstaller.
+    # The command is now a single line to ensure compatibility with PowerShell (Windows) and bash (Linux/macOS).
     - name: Build the executable with PyInstaller
       env:
         NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
       run: |
-        pyinstaller --onefile --name "${{ matrix.executable_name }}" \
-        --add-data "templates${{ matrix.path_separator }}templates" \
-        --add-data "Workflow_Diagram.png${{ matrix.path_separator }}." \
-        --additional-hooks-dir ".github/hooks" \
-        local_app.py
+        pyinstaller --onefile --name "${{ matrix.executable_name }}" --add-data "templates${{ matrix.path_separator }}templates" --add-data "Workflow_Diagram.png${{ matrix.path_separator }}." --additional-hooks-dir ".github/hooks" local_app.py
 
     - name: Upload Executable Artifact
       uses: actions/upload-artifact@v4
