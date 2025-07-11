@@ -54,10 +54,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # BUILD-TIME STEP: Generate the static workflow diagram.
-    # This is run only once (on the Linux runner) to create the asset.
+    # BUILD-TIME STEP: Generate the static workflow diagram BEFORE building.
+    # This creates the PNG file needed for the --add-data flag below.
     - name: Generate Workflow Diagram
-      if: runner.os == 'Linux'
       run: python local_app.py --generate-diagram-only
 
     # BUILD-TIME STEP: Build the application executable.
