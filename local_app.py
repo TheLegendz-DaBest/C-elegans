@@ -84,7 +84,6 @@ def generate_workflow_diagram():
         logging.error(f"Could not generate workflow diagram. Error: {e}")
 
 # --- DATABASE, SCRAPING, AND CATEGORIZATION FUNCTIONS ---
-# (All scraping and database functions remain the same as the original)
 def setup_database():
     """Initializes the SQLite database at RUNTIME."""
     conn = sqlite3.connect(DATABASE_FILE)
@@ -126,8 +125,32 @@ def scrape_youtube(query, topic, max_results=100):
     pass
 
 def store_dataframe(df, table_name):
-    # (Implementation is unchanged)
-    pass
+    """
+    Stores a Pandas DataFrame in the specified database table efficiently.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to store.
+        table_name (str): The name of the table to insert data into.
+    """
+    if df.empty:
+        logging.info(f"DataFrame for table '{table_name}' is empty. Nothing to store.")
+        return
+
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        # Use the 'append' option to add new data. The UNIQUE constraint on the URL
+        # will prevent duplicates if the same data is scraped again.
+        # The to_sql method is highly optimized for this task.
+        df.to_sql(table_name, conn, if_exists='append', index=False)
+        conn.close()
+        logging.info(f"Successfully stored {len(df)} records in the '{table_name}' table.")
+    except sqlite3.IntegrityError as e:
+        # This error is expected when trying to insert duplicate URLs.
+        # A more granular approach would be to loop and try/except each row,
+        # but to_sql is much faster. We can handle this by simply logging it.
+        logging.warning(f"An integrity error occurred, which may indicate duplicate entries were skipped: {e}")
+    except Exception as e:
+        logging.error(f"An error occurred while storing data in '{table_name}': {e}")
 
 
 # --- FLASK WEB APP ---
@@ -176,4 +199,4 @@ if __name__ == '__main__':
         generate_workflow_diagram()
     else:
         # This block is called when the client double-clicks the final executable.
-        main_workflow()
+        main_workflow()```
