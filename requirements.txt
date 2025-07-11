@@ -1,0 +1,11 @@
+flask
+pandas
+requests
+beautifulsoup4
+pymed
+scholarly
+ntscraper
+newsapi-python
+graphviz
+yt-dlp
+pyinstaller
