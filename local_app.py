@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from pymed_paperscraper.pubmed import PubMed
+from pymed_paperscraper import PubMed
 from scholarly import scholarly
 from ntscraper import Nitter
 from newsapi import NewsApiClient
