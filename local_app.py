@@ -254,68 +254,77 @@ def store_dataframe(df, table_name):
         return
     try:
         conn = sqlite3.connect(DATABASE_FILE)
-        df.to_sql(table_name, conn, if_exists='append', index=False)
+        # FIX: Use a lock to prevent concurrent writes from different scraping threads,
+        # which can cause "database is locked" errors.
+        with conn:
+            df.to_sql(table_name, conn, if_exists='append', index=False)
         conn.close()
         logging.info(f"Successfully stored {len(df)} records in the '{table_name}' table.")
     except sqlite3.IntegrityError:
+        # This is not an error, just informational. It means we are skipping duplicates.
         logging.warning(f"An integrity error occurred for table '{table_name}', which may indicate duplicate entries were skipped.")
     except Exception as e:
         logging.error(f"An error occurred while storing data in '{table_name}': {e}")
 
-# --- FLASK WEB APP ---
-template_folder_path = resource_path('templates')
-app = Flask(__name__, template_folder=template_folder_path)
+# --- FLASK WEB APP (APPLICATION FACTORY PATTERN) ---
+def create_app():
+    """Creates and configures the Flask application."""
+    template_folder_path = resource_path('templates')
+    app = Flask(__name__, template_folder=template_folder_path)
 
-@app.route('/')
-def index():
-    conn = sqlite3.connect(DATABASE_FILE)
-    conn.row_factory = sqlite3.Row
-    grouped_studies = defaultdict(list)
-    grouped_opinions = defaultdict(list)
-    all_topics = set()
-    try:
-        studies_cursor = conn.execute('SELECT * FROM studies ORDER BY publication_date DESC')
-        for study in studies_cursor:
-            topic = study['topic']
-            grouped_studies[topic].append(dict(study))
-            all_topics.add(topic)
-        opinions_cursor = conn.execute('SELECT * FROM expert_opinions ORDER BY published_date DESC')
-        for opinion in opinions_cursor:
-            topic = opinion['topic']
-            grouped_opinions[topic].append(dict(opinion))
-            all_topics.add(topic)
-    except Exception as e:
-        logging.error(f"Error fetching data from database for index page: {e}")
-    finally:
-        conn.close()
-    sorted_topics = sorted(list(all_topics))
-    return render_template('index.html', grouped_studies=grouped_studies, grouped_opinions=grouped_opinions, all_topics=sorted_topics)
-
-@app.route('/add_study', methods=['GET', 'POST'])
-def add_study():
-    if request.method == 'POST':
+    @app.route('/')
+    def index():
+        conn = sqlite3.connect(DATABASE_FILE)
+        conn.row_factory = sqlite3.Row
+        grouped_studies = defaultdict(list)
+        grouped_opinions = defaultdict(list)
+        all_topics = set()
         try:
-            conn = sqlite3.connect(DATABASE_FILE)
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO studies (title, authors, publication_date, source, url, abstract, citations, study_type, topic)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                request.form['title'], request.form['authors'], request.form['publication_date'],
-                request.form['source'], request.form['url'], request.form['abstract'],
-                int(request.form.get('citations', 0)), request.form.get('study_type', 'Publication'),
-                request.form['topic']
-            ))
-            conn.commit()
-            conn.close()
-            logging.info(f"Manually added study: {request.form['title']}")
+            studies_cursor = conn.execute('SELECT * FROM studies ORDER BY publication_date DESC')
+            for study in studies_cursor:
+                topic = study['topic']
+                grouped_studies[topic].append(dict(study))
+                all_topics.add(topic)
+            opinions_cursor = conn.execute('SELECT * FROM expert_opinions ORDER BY published_date DESC')
+            for opinion in opinions_cursor:
+                topic = opinion['topic']
+                grouped_opinions[topic].append(dict(opinion))
+                all_topics.add(topic)
         except Exception as e:
-            logging.error(f"Error adding study manually: {e}")
-        return redirect(url_for('index'))
-    return render_template('add_study.html')
+            logging.error(f"Error fetching data from database for index page: {e}")
+        finally:
+            conn.close()
+        sorted_topics = sorted(list(all_topics))
+        return render_template('index.html', grouped_studies=grouped_studies, grouped_opinions=grouped_opinions, all_topics=sorted_topics)
+
+    @app.route('/add_study', methods=['GET', 'POST'])
+    def add_study():
+        if request.method == 'POST':
+            try:
+                conn = sqlite3.connect(DATABASE_FILE)
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO studies (title, authors, publication_date, source, url, abstract, citations, study_type, topic)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    request.form['title'], request.form['authors'], request.form['publication_date'],
+                    request.form['source'], request.form['url'], request.form['abstract'],
+                    int(request.form.get('citations', 0)), request.form.get('study_type', 'Publication'),
+                    request.form['topic']
+                ))
+                conn.commit()
+                conn.close()
+                logging.info(f"Manually added study: {request.form['title']}")
+            except Exception as e:
+                logging.error(f"Error adding study manually: {e}")
+            return redirect(url_for('index'))
+        return render_template('add_study.html')
+
+    return app
 
 def run_flask_app():
-    """Runs the Flask web application and opens the browser."""
+    """Creates and runs the Flask web application."""
+    app = create_app()
     threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5000/")).start()
     app.run(debug=False, port=5000)
 
@@ -339,7 +348,6 @@ def main_workflow():
     print("\n[4/5] Starting data scraping process (this may take a few minutes)...")
     for topic, query in topics.items():
         print(f"\n--- Scraping for topic: {topic} ---")
-        # Using optimized max_results values based on API limits
         time.sleep(random.uniform(1, 3))
         scrape_pubmed(query, topic, max_results=1000)
         time.sleep(random.uniform(1, 3))
@@ -357,7 +365,9 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--generate-diagram-only':
         print("Generating workflow diagram for build artifact...")
         generate_workflow_diagram()
-        # FIX: Explicitly exit after the diagram is created to prevent the script from hanging in the CI/CD environment.
+        print("Diagram generation complete. Exiting.")
+        # FIX: Explicitly exit to prevent the script from hanging in the CI/CD pipeline.
+        # This is now more reliable as Flask is not initialized in this path.
         sys.exit(0)
     else:
         main_workflow()
