@@ -357,5 +357,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--generate-diagram-only':
         print("Generating workflow diagram for build artifact...")
         generate_workflow_diagram()
+        # FIX: Explicitly exit after the diagram is created to prevent the script from hanging in the CI/CD environment.
+        sys.exit(0)
     else:
         main_workflow()
