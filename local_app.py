@@ -74,14 +74,58 @@ def generate_workflow_diagram():
         dot = graphviz.Digraph('C_Elegans_Workflow', comment='Research Cataloging System Workflow')
         dot.attr('node', shape='box', style='rounded,filled', fillcolor='lightblue', fontname='Helvetica')
         dot.attr('edge', fontname='Helvetica')
-        dot.attr(rankdir='TB', label='C. elegans Research Aggregator Workflow', fontsize='20')
+        dot.attr(rankdir='TB', label='C. elegans Research Aggregator Workflow', fontsize='20', labelloc='t')
 
-        # Node definitions... (omitted for brevity, same as original)
+        # Define Nodes
+        with dot.subgraph(name='cluster_sources') as c:
+            c.attr(style='filled', color='lightgrey')
+            c.attr(label='Data Sources')
+            c.node('pubmed', 'PubMed')
+            c.node('scholar', 'Google Scholar')
+            c.node('news', 'NewsAPI')
+            c.node('twitter', 'Twitter/Nitter')
+            c.node('youtube', 'YouTube')
+
+        with dot.subgraph(name='cluster_process') as c:
+            c.attr(label='Processing Core')
+            c.attr(style='filled', color='beige')
+            c.node('main_app', 'local_app.py\n(Main Controller)')
+            c.node('scraper', 'Scraping Functions')
+            c.node('database', 'SQLite DB\n(celegans_research.db)')
+            c.node('web_ui', 'Flask Web UI')
+
+        # Define Edges
+        dot.edge('main_app', 'scraper', label='Initiates Scraping')
+        dot.edge('scraper', 'pubmed')
+        dot.edge('scraper', 'scholar')
+        dot.edge('scraper', 'news')
+        dot.edge('scraper', 'twitter')
+        dot.edge('scraper', 'youtube')
+
+        dot.edge('scraper', 'database', label='Stores Data')
+        dot.edge('main_app', 'web_ui', label='Launches UI')
+        dot.edge('web_ui', 'database', label='Reads Data For Display')
+
+        dot.node('user', 'User', shape='ellipse', fillcolor='lightgreen')
+        dot.edge('user', 'web_ui', label='Interacts with')
+
+        with dot.subgraph(name='cluster_build') as c:
+            c.attr(label='Build Process (GitHub Actions)')
+            c.attr(style='filled', color='lightcyan')
+            c.node('gh_actions', 'GitHub Actions Workflow')
+            c.node('pyinstaller', 'PyInstaller')
+            c.node('diagram_gen', 'generate_workflow_diagram()')
+            c.node('executable', 'Packaged Executable')
+
+        dot.edge('gh_actions', 'diagram_gen', label='calls')
+        dot.edge('diagram_gen', 'gh_actions', label='returns diagram')
+        dot.edge('gh_actions', 'pyinstaller', label='runs')
+        dot.edge('pyinstaller', 'executable', label='creates')
 
         dot.render(WORKFLOW_DIAGRAM_FILENAME.replace('.png', ''), format='png', cleanup=True)
         logging.info(f"Successfully created '{WORKFLOW_DIAGRAM_FILENAME}'")
     except Exception as e:
-        logging.error(f"Could not generate workflow diagram. Error: {e}")
+        logging.error(f"Could not generate workflow diagram. Is Graphviz installed and in your PATH? Error: {e}")
 
 # --- DATABASE, SCRAPING, AND CATEGORIZATION FUNCTIONS ---
 def setup_database():
@@ -104,54 +148,119 @@ def setup_database():
     conn.commit()
     conn.close()
 
-def scrape_pubmed(query, topic, max_results=1000):
-    # (Implementation is unchanged)
-    pass
+def scrape_pubmed(query, topic, max_results=10):
+    """Scrapes PubMed for a given query and topic."""
+    logging.info(f"Scraping PubMed for query: '{query}'")
+    try:
+        pubmed = PubMed(tool="C_elegans_DB", email="user@example.com")
+        results = pubmed.query(query, max_results=max_results)
+        data = []
+        for article in results:
+            authors = ', '.join([au['lastname'] + ' ' + au['initials'] for au in article.authors]) if article.authors else 'N/A'
+            data.append({
+                'title': article.title, 'authors': authors, 'publication_date': str(article.publication_date),
+                'source': 'PubMed', 'url': f"https://pubmed.ncbi.nlm.nih.gov/{article.pubmed_id.splitlines()[0]}/",
+                'abstract': article.abstract, 'citations': 0, 'study_type': 'Publication', 'topic': topic
+            })
+        df = pd.DataFrame(data)
+        store_dataframe(df, 'studies')
+    except Exception as e:
+        logging.error(f"Error scraping PubMed: {e}")
 
-def scrape_google_scholar(query, topic, max_results=1000):
-    # (Implementation is unchanged)
-    pass
+def scrape_google_scholar(query, topic, max_results=10):
+    """Scrapes Google Scholar for a given query and topic."""
+    logging.info(f"Scraping Google Scholar for query: '{query}'")
+    try:
+        search_query = scholarly.search_pubs(query)
+        data = []
+        for i, pub in enumerate(search_query):
+            if i >= max_results: break
+            bib = pub.get('bib', {})
+            data.append({
+                'title': bib.get('title'), 'authors': ', '.join(bib.get('author', [])),
+                'publication_date': bib.get('pub_year'), 'source': bib.get('venue', 'Google Scholar'),
+                'url': pub.get('pub_url', f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}"),
+                'abstract': bib.get('abstract'), 'citations': pub.get('num_citations', 0),
+                'study_type': 'Publication', 'topic': topic
+            })
+        df = pd.DataFrame(data)
+        store_dataframe(df, 'studies')
+    except Exception as e:
+        logging.error(f"Error scraping Google Scholar: {e}")
 
-def scrape_news(query, topic, max_results=100):
-    # (Implementation is unchanged)
-    pass
+def scrape_news(query, topic, max_results=20):
+    """Scrapes news articles using NewsAPI."""
+    if not NEWS_API_KEY:
+        logging.warning("NEWS_API_KEY not found. Skipping news scraping.")
+        return
+    logging.info(f"Scraping NewsAPI for query: '{query}'")
+    try:
+        newsapi = NewsApiClient(api_key=NEWS_API_KEY)
+        articles = newsapi.get_everything(q=query, language='en', sort_by='relevancy', page_size=max_results)
+        data = []
+        for article in articles['articles']:
+            data.append({
+                'title': article['title'], 'source': article['source']['name'], 'url': article['url'],
+                'published_date': article['publishedAt'].split('T')[0], 'author': article.get('author', 'N/A'),
+                'summary': article.get('description'), 'topic': topic
+            })
+        df = pd.DataFrame(data)
+        store_dataframe(df, 'expert_opinions')
+    except Exception as e:
+        logging.error(f"Error scraping NewsAPI: {e}")
 
-def scrape_twitter(query, topic, max_results=200):
-    # (Implementation is unchanged)
-    pass
+def scrape_twitter(query, topic, max_results=20):
+    """Scrapes Twitter/Nitter for a given query and topic."""
+    logging.info(f"Scraping Twitter/Nitter for query: '{query}'")
+    try:
+        scraper = Nitter(log_level=1)
+        tweets = scraper.get_tweets(query, mode='term', number=max_results)
+        data = []
+        for tweet in tweets['tweets']:
+            data.append({
+                'title': f"Tweet by {tweet['user']['name']}", 'source': 'Twitter/Nitter', 'url': tweet['link'],
+                'published_date': tweet['date'].split(' ')[0], 'author': tweet['user']['username'],
+                'summary': tweet['text'], 'topic': topic
+            })
+        df = pd.DataFrame(data)
+        store_dataframe(df, 'expert_opinions')
+    except Exception as e:
+        logging.error(f"Error scraping Twitter/Nitter: {e}")
 
-def scrape_youtube(query, topic, max_results=100):
-    # (Implementation is unchanged)
-    pass
+def scrape_youtube(query, topic, max_results=10):
+    """Scrapes YouTube for videos related to the query."""
+    logging.info(f"Scraping YouTube for query: '{query}'")
+    try:
+        ydl_opts = {'quiet': True, 'extract_flat': True, 'match_filter': yt_dlp.utils.match_filter_func('!is_live')}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
+            videos = result.get('entries', [])
+            data = []
+            for video in videos:
+                data.append({
+                    'title': video.get('title'), 'source': 'YouTube', 'url': video.get('webpage_url'),
+                    'published_date': video.get('upload_date'), 'author': video.get('uploader'),
+                    'summary': video.get('description'), 'topic': topic
+                })
+            df = pd.DataFrame(data)
+            store_dataframe(df, 'expert_opinions')
+    except Exception as e:
+        logging.error(f"Error scraping YouTube: {e}")
 
 def store_dataframe(df, table_name):
-    """
-    Stores a Pandas DataFrame in the specified database table efficiently.
-
-    Args:
-        df (pd.DataFrame): The DataFrame to store.
-        table_name (str): The name of the table to insert data into.
-    """
+    """Stores a Pandas DataFrame in the specified database table efficiently."""
     if df.empty:
         logging.info(f"DataFrame for table '{table_name}' is empty. Nothing to store.")
         return
-
     try:
         conn = sqlite3.connect(DATABASE_FILE)
-        # Use the 'append' option to add new data. The UNIQUE constraint on the URL
-        # will prevent duplicates if the same data is scraped again.
-        # The to_sql method is highly optimized for this task.
         df.to_sql(table_name, conn, if_exists='append', index=False)
         conn.close()
         logging.info(f"Successfully stored {len(df)} records in the '{table_name}' table.")
-    except sqlite3.IntegrityError as e:
-        # This error is expected when trying to insert duplicate URLs.
-        # A more granular approach would be to loop and try/except each row,
-        # but to_sql is much faster. We can handle this by simply logging it.
-        logging.warning(f"An integrity error occurred, which may indicate duplicate entries were skipped: {e}")
+    except sqlite3.IntegrityError:
+        logging.warning(f"An integrity error occurred for table '{table_name}', which may indicate duplicate entries were skipped.")
     except Exception as e:
         logging.error(f"An error occurred while storing data in '{table_name}': {e}")
-
 
 # --- FLASK WEB APP ---
 template_folder_path = resource_path('templates')
@@ -159,13 +268,51 @@ app = Flask(__name__, template_folder=template_folder_path)
 
 @app.route('/')
 def index():
-    # (Implementation is unchanged)
-    pass
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    grouped_studies = defaultdict(list)
+    grouped_opinions = defaultdict(list)
+    all_topics = set()
+    try:
+        studies_cursor = conn.execute('SELECT * FROM studies ORDER BY publication_date DESC')
+        for study in studies_cursor:
+            topic = study['topic']
+            grouped_studies[topic].append(dict(study))
+            all_topics.add(topic)
+        opinions_cursor = conn.execute('SELECT * FROM expert_opinions ORDER BY published_date DESC')
+        for opinion in opinions_cursor:
+            topic = opinion['topic']
+            grouped_opinions[topic].append(dict(opinion))
+            all_topics.add(topic)
+    except Exception as e:
+        logging.error(f"Error fetching data from database for index page: {e}")
+    finally:
+        conn.close()
+    sorted_topics = sorted(list(all_topics))
+    return render_template('index.html', grouped_studies=grouped_studies, grouped_opinions=grouped_opinions, all_topics=sorted_topics)
 
 @app.route('/add_study', methods=['GET', 'POST'])
 def add_study():
-    # (Implementation is unchanged)
-    pass
+    if request.method == 'POST':
+        try:
+            conn = sqlite3.connect(DATABASE_FILE)
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO studies (title, authors, publication_date, source, url, abstract, citations, study_type, topic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                request.form['title'], request.form['authors'], request.form['publication_date'],
+                request.form['source'], request.form['url'], request.form['abstract'],
+                int(request.form.get('citations', 0)), request.form.get('study_type', 'Publication'),
+                request.form['topic']
+            ))
+            conn.commit()
+            conn.close()
+            logging.info(f"Manually added study: {request.form['title']}")
+        except Exception as e:
+            logging.error(f"Error adding study manually: {e}")
+        return redirect(url_for('index'))
+    return render_template('add_study.html')
 
 def run_flask_app():
     """Runs the Flask web application and opens the browser."""
@@ -176,27 +323,38 @@ def run_flask_app():
 def main_workflow():
     """The main function that orchestrates the entire workflow for the client."""
     print("--- Starting C. elegans Research Cataloging System ---")
-
-    # RUNTIME STEP: Extract the pre-built diagram from the executable.
     print("\n[1/5] Checking for and extracting workflow diagram...")
     extract_and_save_diagram()
-
-    # RUNTIME STEP: Create and populate the database if it doesn't exist.
     print("\n[2/5] Setting up database...")
     setup_database()
     print("  - Database setup complete.")
-
-    # (Keyword definition and scraping loop remain the same)
-    
+    print("\n[3/5] Defining search topics and keywords...")
+    topics = {
+        "Aging & Longevity": '"C. elegans" AND (aging OR longevity OR lifespan)',
+        "Neuroscience": '"C. elegans" AND (neuron OR synapse OR behavior OR neural circuit)',
+        "Genetics & Development": '"C. elegans" AND (genetics OR development OR gene expression OR embryo)',
+        "Drug Discovery & Disease Models": '"C. elegans" AND (drug discovery OR disease model OR screen OR therapeutic)',
+    }
+    print(f"  - Topics defined: {', '.join(topics.keys())}")
+    print("\n[4/5] Starting data scraping process (this may take a few minutes)...")
+    for topic, query in topics.items():
+        print(f"\n--- Scraping for topic: {topic} ---")
+        time.sleep(random.uniform(1, 3))
+        scrape_pubmed(query, topic)
+        time.sleep(random.uniform(1, 3))
+        scrape_google_scholar(query, topic)
+        time.sleep(random.uniform(1, 3))
+        scrape_news(query, topic)
+        time.sleep(random.uniform(1, 3))
+        scrape_twitter(f'"{query}"', topic)
+        time.sleep(random.uniform(1, 3))
+        scrape_youtube(query, topic)
     print("\n[5/5] All scraping complete. Launching web interface...")
     run_flask_app()
 
 if __name__ == '__main__':
-    # This logic separates build-time actions from the main runtime workflow.
     if len(sys.argv) > 1 and sys.argv[1] == '--generate-diagram-only':
-        # This block is called ONLY by the GitHub Actions workflow.
         print("Generating workflow diagram for build artifact...")
         generate_workflow_diagram()
     else:
-        # This block is called when the client double-clicks the final executable.
         main_workflow()
