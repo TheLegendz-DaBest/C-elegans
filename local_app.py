@@ -148,7 +148,7 @@ def setup_database():
     conn.commit()
     conn.close()
 
-def scrape_pubmed(query, topic, max_results=10):
+def scrape_pubmed(query, topic, max_results=1000):
     """Scrapes PubMed for a given query and topic."""
     logging.info(f"Scraping PubMed for query: '{query}'")
     try:
@@ -167,7 +167,7 @@ def scrape_pubmed(query, topic, max_results=10):
     except Exception as e:
         logging.error(f"Error scraping PubMed: {e}")
 
-def scrape_google_scholar(query, topic, max_results=10):
+def scrape_google_scholar(query, topic, max_results=100):
     """Scrapes Google Scholar for a given query and topic."""
     logging.info(f"Scraping Google Scholar for query: '{query}'")
     try:
@@ -188,7 +188,7 @@ def scrape_google_scholar(query, topic, max_results=10):
     except Exception as e:
         logging.error(f"Error scraping Google Scholar: {e}")
 
-def scrape_news(query, topic, max_results=20):
+def scrape_news(query, topic, max_results=100):
     """Scrapes news articles using NewsAPI."""
     if not NEWS_API_KEY:
         logging.warning("NEWS_API_KEY not found. Skipping news scraping.")
@@ -209,7 +209,7 @@ def scrape_news(query, topic, max_results=20):
     except Exception as e:
         logging.error(f"Error scraping NewsAPI: {e}")
 
-def scrape_twitter(query, topic, max_results=20):
+def scrape_twitter(query, topic, max_results=200):
     """Scrapes Twitter/Nitter for a given query and topic."""
     logging.info(f"Scraping Twitter/Nitter for query: '{query}'")
     try:
@@ -227,7 +227,7 @@ def scrape_twitter(query, topic, max_results=20):
     except Exception as e:
         logging.error(f"Error scraping Twitter/Nitter: {e}")
 
-def scrape_youtube(query, topic, max_results=10):
+def scrape_youtube(query, topic, max_results=100):
     """Scrapes YouTube for videos related to the query."""
     logging.info(f"Scraping YouTube for query: '{query}'")
     try:
@@ -339,16 +339,17 @@ def main_workflow():
     print("\n[4/5] Starting data scraping process (this may take a few minutes)...")
     for topic, query in topics.items():
         print(f"\n--- Scraping for topic: {topic} ---")
+        # Using optimized max_results values based on API limits
         time.sleep(random.uniform(1, 3))
-        scrape_pubmed(query, topic)
+        scrape_pubmed(query, topic, max_results=1000)
         time.sleep(random.uniform(1, 3))
-        scrape_google_scholar(query, topic)
+        scrape_google_scholar(query, topic, max_results=100)
         time.sleep(random.uniform(1, 3))
-        scrape_news(query, topic)
+        scrape_news(query, topic, max_results=100)
         time.sleep(random.uniform(1, 3))
-        scrape_twitter(f'"{query}"', topic)
+        scrape_twitter(f'"{query}"', topic, max_results=200)
         time.sleep(random.uniform(1, 3))
-        scrape_youtube(query, topic)
+        scrape_youtube(query, topic, max_results=100)
     print("\n[5/5] All scraping complete. Launching web interface...")
     run_flask_app()
 
