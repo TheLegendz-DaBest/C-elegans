@@ -370,6 +370,8 @@ if __name__ == '__main__':
         # from hanging or being canceled in the CI/CD pipeline on Windows.
         sys.stdout.flush()
         sys.stderr.flush()
-        sys.exit(0)
+        # Use os._exit(0) for a more immediate exit, which can resolve hangs
+        # in CI environments caused by lingering subprocesses on Windows.
+        os._exit(0)
     else:
         main_workflow()
