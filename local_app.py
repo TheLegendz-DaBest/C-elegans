@@ -366,8 +366,10 @@ if __name__ == '__main__':
         print("Generating workflow diagram for build artifact...")
         generate_workflow_diagram()
         print("Diagram generation complete. Exiting.")
-        # FIX: Explicitly exit to prevent the script from hanging in the CI/CD pipeline.
-        # This is now more reliable as Flask is not initialized in this path.
+        # FIX: Explicitly flush output streams and exit to prevent the script
+        # from hanging or being canceled in the CI/CD pipeline on Windows.
+        sys.stdout.flush()
+        sys.stderr.flush()
         sys.exit(0)
     else:
         main_workflow()
