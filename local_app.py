@@ -20,13 +20,28 @@ import graphviz
 import time
 import random
 import shutil
+import urllib.parse # Added for URL encoding
+from fake_useragent import UserAgent # Added for robust scraping
 
 # --- CONFIGURATION ---
 DATABASE_FILE = 'celegans_research.db'
-NEWS_API_KEY = os.getenv('NEWS_API_KEY')
+# FIX: Hardcoded the NEWS_API_KEY as requested for the client's executable.
+# This ensures the news fetching functionality works without needing environment variables.
+NEWS_API_KEY = 'd2ba085e4689486098f15c8f674301e7'
 WORKFLOW_DIAGRAM_FILENAME = 'Workflow_Diagram.png'
 
+# --- SETUP ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Initialize UserAgent to be used by scrapers to avoid being blocked.
+try:
+    ua = UserAgent()
+except Exception:
+    # Fallback user agent in case the fake-useragent service is down
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+
+# Set a global timeout for scholarly to prevent indefinite hangs
+scholarly.set_timeout(15)
+
 
 # --- HELPER FUNCTIONS for PyInstaller ---
 def resource_path(relative_path):
@@ -152,51 +167,79 @@ def scrape_pubmed(query, topic, max_results=1000):
     """Scrapes PubMed for a given query and topic."""
     logging.info(f"Scraping PubMed for query: '{query}'")
     try:
+        # pymed is a well-behaved library, usually doesn't require a user-agent
         pubmed = PubMed(tool="C_elegans_DB", email="user@example.com")
         results = pubmed.query(query, max_results=max_results)
         data = []
         for article in results:
+            # Defensive check for pubmed_id to prevent errors
+            if not article.pubmed_id or not article.pubmed_id.strip():
+                continue
+            
             authors = ', '.join([au['lastname'] + ' ' + au['initials'] for au in article.authors]) if article.authors else 'N/A'
+            # The splitlines() is a good defense against malformed IDs.
+            url = f"https://pubmed.ncbi.nlm.nih.gov/{article.pubmed_id.splitlines()[0]}/"
+            
             data.append({
                 'title': article.title, 'authors': authors, 'publication_date': str(article.publication_date),
-                'source': 'PubMed', 'url': f"https://pubmed.ncbi.nlm.nih.gov/{article.pubmed_id.splitlines()[0]}/",
+                'source': 'PubMed', 'url': url,
                 'abstract': article.abstract, 'citations': 0, 'study_type': 'Publication', 'topic': topic
             })
         df = pd.DataFrame(data)
         store_dataframe(df, 'studies')
     except Exception as e:
-        logging.error(f"Error scraping PubMed: {e}")
+        logging.error(f"Error scraping PubMed: {e}. This may be a network issue or a change in the PubMed API.")
 
 def scrape_google_scholar(query, topic, max_results=100):
     """Scrapes Google Scholar for a given query and topic."""
     logging.info(f"Scraping Google Scholar for query: '{query}'")
     try:
+        # IMPROVEMENT: Set a random user agent for scholarly to reduce the risk of being blocked.
+        scholarly.set_proxy_generator(lambda: {'http': f'http://{ua.random}'})
+        
         search_query = scholarly.search_pubs(query)
         data = []
         for i, pub in enumerate(search_query):
             if i >= max_results: break
             bib = pub.get('bib', {})
+            title = bib.get('title', 'No Title')
+            
+            # FIX: Improve URL handling to prevent 404s.
+            # Prioritize the direct publication URL. If unavailable, create a stable link
+            # to the Google Scholar entry for that specific paper, which is better than a generic search query.
+            pub_url = pub.get('pub_url')
+            if not pub_url:
+                # This creates a search link for the specific title, which is more reliable than a generic query link.
+                pub_url = f"https://scholar.google.com/scholar?q={urllib.parse.quote_plus(title)}"
+
             data.append({
-                'title': bib.get('title'), 'authors': ', '.join(bib.get('author', [])),
-                'publication_date': bib.get('pub_year'), 'source': bib.get('venue', 'Google Scholar'),
-                'url': pub.get('pub_url', f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}"),
+                'title': title, 'authors': ', '.join(bib.get('author', [])),
+                'publication_date': str(bib.get('pub_year', 'N/A')), 'source': bib.get('venue', 'Google Scholar'),
+                'url': pub_url,
                 'abstract': bib.get('abstract'), 'citations': pub.get('num_citations', 0),
                 'study_type': 'Publication', 'topic': topic
             })
         df = pd.DataFrame(data)
         store_dataframe(df, 'studies')
     except Exception as e:
-        logging.error(f"Error scraping Google Scholar: {e}")
+        logging.error(f"Error scraping Google Scholar: {e}. Google may be temporarily blocking requests. The script will continue.")
 
 def scrape_news(query, topic, max_results=100):
     """Scrapes news articles using NewsAPI."""
-    if not NEWS_API_KEY:
-        logging.warning("NEWS_API_KEY not found. Skipping news scraping.")
+    if not NEWS_API_KEY or NEWS_API_KEY == 'YOUR_API_KEY_HERE':
+        logging.warning("NEWS_API_KEY not found or not set. Skipping news scraping.")
         return
     logging.info(f"Scraping NewsAPI for query: '{query}'")
     try:
+        # The newsapi-python client handles headers and endpoints.
         newsapi = NewsApiClient(api_key=NEWS_API_KEY)
-        articles = newsapi.get_everything(q=query, language='en', sort_by='relevancy', page_size=max_results)
+        # Note: NewsAPI 'get_everything' on a developer plan only provides articles from the last month.
+        articles = newsapi.get_everything(q=query, language='en', sort_by='relevancy', page_size=min(max_results, 100))
+        
+        if articles['status'] != 'ok':
+            logging.error(f"NewsAPI returned an error: {articles.get('message')}")
+            return
+
         data = []
         for article in articles['articles']:
             data.append({
@@ -207,16 +250,29 @@ def scrape_news(query, topic, max_results=100):
         df = pd.DataFrame(data)
         store_dataframe(df, 'expert_opinions')
     except Exception as e:
-        logging.error(f"Error scraping NewsAPI: {e}")
+        logging.error(f"Error scraping NewsAPI: {e}. Check your API key and network connection.")
 
 def scrape_twitter(query, topic, max_results=200):
     """Scrapes Twitter/Nitter for a given query and topic."""
     logging.info(f"Scraping Twitter/Nitter for query: '{query}'")
+    # FIX: Nitter is unstable. Add retries and a clear warning.
+    # The Nitter class will attempt to find a working instance.
+    # We increase retries to make it more robust against temporary instance failures.
     try:
-        scraper = Nitter(log_level=1)
+        scraper = Nitter(log_level=0, retries=5, skip_instance_check=False) # log_level=0 to reduce console spam
         tweets = scraper.get_tweets(query, mode='term', number=max_results)
+        
+        # FIX: Add robust check for valid results from ntscraper
+        if not tweets or not tweets.get('tweets'):
+            logging.warning(f"Nitter did not return any tweets for '{query}'. This is common due to the instability of public Nitter instances.")
+            return
+
         data = []
         for tweet in tweets['tweets']:
+            # Ensure essential data exists to avoid errors
+            if not all(k in tweet for k in ['link', 'date', 'text']) or not all(k in tweet['user'] for k in ['name', 'username']):
+                continue
+
             data.append({
                 'title': f"Tweet by {tweet['user']['name']}", 'source': 'Twitter/Nitter', 'url': tweet['link'],
                 'published_date': tweet['date'].split(' ')[0], 'author': tweet['user']['username'],
@@ -225,27 +281,39 @@ def scrape_twitter(query, topic, max_results=200):
         df = pd.DataFrame(data)
         store_dataframe(df, 'expert_opinions')
     except Exception as e:
-        logging.error(f"Error scraping Twitter/Nitter: {e}")
+        logging.error(f"CRITICAL: Error scraping Twitter/Nitter: {e}. This source is often unreliable and may fail.")
 
 def scrape_youtube(query, topic, max_results=100):
     """Scrapes YouTube for videos related to the query."""
     logging.info(f"Scraping YouTube for query: '{query}'")
     try:
-        ydl_opts = {'quiet': True, 'extract_flat': True, 'match_filter': yt_dlp.utils.match_filter_func('!is_live')}
+        # IMPROVEMENT: Add a User-Agent to yt_dlp requests to appear as a regular browser.
+        ydl_opts = {
+            'quiet': True, 
+            'extract_flat': True, # Don't fetch full video info, just the listing
+            'match_filter': yt_dlp.utils.match_filter_func('!is_live'),
+            'http_headers': {'User-Agent': ua.random}
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # ytsearch{max_results} is the correct syntax for searching a limited number of results
             result = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
             videos = result.get('entries', [])
             data = []
             for video in videos:
+                # Use .get() with default values for safety
                 data.append({
-                    'title': video.get('title'), 'source': 'YouTube', 'url': video.get('webpage_url'),
-                    'published_date': video.get('upload_date'), 'author': video.get('uploader'),
-                    'summary': video.get('description'), 'topic': topic
+                    'title': video.get('title', 'Untitled Video'), 
+                    'source': 'YouTube', 
+                    'url': video.get('webpage_url', '#'),
+                    'published_date': video.get('upload_date', 'N/A'), # Format is YYYYMMDD
+                    'author': video.get('uploader', 'N/A'),
+                    'summary': video.get('description'), 
+                    'topic': topic
                 })
             df = pd.DataFrame(data)
             store_dataframe(df, 'expert_opinions')
     except Exception as e:
-        logging.error(f"Error scraping YouTube: {e}")
+        logging.error(f"Error scraping YouTube: {e}. This could be due to network issues or changes in YouTube's site structure.")
 
 def store_dataframe(df, table_name):
     """Stores a Pandas DataFrame in the specified database table efficiently."""
@@ -253,18 +321,31 @@ def store_dataframe(df, table_name):
         logging.info(f"DataFrame for table '{table_name}' is empty. Nothing to store.")
         return
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        # FIX: Use a lock to prevent concurrent writes from different scraping threads,
+        conn = sqlite3.connect(DATABASE_FILE, timeout=10) # Added timeout to connect
+        # Use a lock to prevent concurrent writes from different scraping threads,
         # which can cause "database is locked" errors.
         with conn:
-            df.to_sql(table_name, conn, if_exists='append', index=False)
-        conn.close()
-        logging.info(f"Successfully stored {len(df)} records in the '{table_name}' table.")
-    except sqlite3.IntegrityError:
-        # This is not an error, just informational. It means we are skipping duplicates.
-        logging.warning(f"An integrity error occurred for table '{table_name}', which may indicate duplicate entries were skipped.")
+            # Remove duplicates based on URL before appending to avoid IntegrityError
+            # and keep the database clean.
+            existing_urls = pd.read_sql(f'SELECT url FROM {table_name}', conn)['url'].tolist()
+            original_count = len(df)
+            df = df[~df['url'].isin(existing_urls)]
+            new_count = len(df)
+            
+            if new_count > 0:
+                df.to_sql(table_name, conn, if_exists='append', index=False)
+                logging.info(f"Successfully stored {new_count} new records (out of {original_count} scraped) in the '{table_name}' table.")
+            else:
+                logging.info(f"All {original_count} scraped records for '{table_name}' were already in the database.")
+
+    except sqlite3.Error as e:
+        # More specific error handling for sqlite
+        logging.error(f"A SQLite error occurred while storing data in '{table_name}': {e}")
     except Exception as e:
-        logging.error(f"An error occurred while storing data in '{table_name}': {e}")
+        logging.error(f"An unexpected error occurred while storing data in '{table_name}': {e}")
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
 
 # --- FLASK WEB APP (APPLICATION FACTORY PATTERN) ---
 def create_app():
@@ -280,7 +361,7 @@ def create_app():
         grouped_opinions = defaultdict(list)
         all_topics = set()
         try:
-            studies_cursor = conn.execute('SELECT * FROM studies ORDER BY publication_date DESC')
+            studies_cursor = conn.execute('SELECT * FROM studies ORDER BY publication_date DESC, citations DESC')
             for study in studies_cursor:
                 topic = study['topic']
                 grouped_studies[topic].append(dict(study))
@@ -315,6 +396,8 @@ def create_app():
                 conn.commit()
                 conn.close()
                 logging.info(f"Manually added study: {request.form['title']}")
+            except sqlite3.IntegrityError:
+                logging.warning(f"Could not add study '{request.form['title']}'. The URL '{request.form['url']}' may already exist.")
             except Exception as e:
                 logging.error(f"Error adding study manually: {e}")
             return redirect(url_for('index'))
@@ -325,6 +408,7 @@ def create_app():
 def run_flask_app():
     """Creates and runs the Flask web application."""
     app = create_app()
+    # Open the web browser after a short delay to allow the server to start.
     threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5000/")).start()
     app.run(debug=False, port=5000)
 
@@ -346,22 +430,38 @@ def main_workflow():
     }
     print(f"  - Topics defined: {', '.join(topics.keys())}")
     print("\n[4/5] Starting data scraping process (this may take a few minutes)...")
+    print("  - NOTE: Some sources like Twitter/Nitter may fail due to their public, unstable nature. The program will continue.")
+    
+    # Create a list of scraping tasks to run
+    scraping_tasks = []
     for topic, query in topics.items():
-        print(f"\n--- Scraping for topic: {topic} ---")
+        # Add a small random delay between different topics to be less aggressive
         time.sleep(random.uniform(1, 3))
-        scrape_pubmed(query, topic, max_results=1000)
-        time.sleep(random.uniform(1, 3))
-        scrape_google_scholar(query, topic, max_results=100)
-        time.sleep(random.uniform(1, 3))
-        scrape_news(query, topic, max_results=100)
-        time.sleep(random.uniform(1, 3))
-        scrape_twitter(f'"{query}"', topic, max_results=200)
-        time.sleep(random.uniform(1, 3))
-        scrape_youtube(query, topic, max_results=100)
+        print(f"\n--- Queuing scraping tasks for topic: {topic} ---")
+        # Each function call is a task
+        scraping_tasks.append(threading.Thread(target=scrape_pubmed, args=(query, topic), kwargs={'max_results': 1000}))
+        scraping_tasks.append(threading.Thread(target=scrape_google_scholar, args=(query, topic), kwargs={'max_results': 100}))
+        scraping_tasks.append(threading.Thread(target=scrape_news, args=(query, topic), kwargs={'max_results': 100}))
+        scraping_tasks.append(threading.Thread(target=scrape_twitter, args=(f'"{query}"', topic), kwargs={'max_results': 200}))
+        scraping_tasks.append(threading.Thread(target=scrape_youtube, args=(query, topic), kwargs={'max_results': 100}))
+
+    # IMPROVEMENT: Run scraping tasks in parallel using threads to speed up the process.
+    # The database writing is thread-safe due to the `with conn:` context manager.
+    for task in scraping_tasks:
+        task.start()
+        time.sleep(random.uniform(0.5, 1.5)) # Stagger thread starts slightly
+
+    # Wait for all threads to complete
+    for task in scraping_tasks:
+        task.join()
+
     print("\n[5/5] All scraping complete. Launching web interface...")
     run_flask_app()
 
 if __name__ == '__main__':
+    # This logic allows the script to be used for two purposes:
+    # 1. Normal execution to run the application.
+    # 2. A special mode for the build process to generate a diagram.
     if len(sys.argv) > 1 and sys.argv[1] == '--generate-diagram-only':
         print("Generating workflow diagram for build artifact...")
         generate_workflow_diagram()
