@@ -59,9 +59,8 @@ jobs:
 
     # BUILD-TIME STEP: Build the executable with PyInstaller.
     # The command is now a single line to ensure compatibility with PowerShell (Windows) and bash (Linux/macOS).
+    # FIX: Removed the NEWS_API_KEY from env as it is now hardcoded in the script.
     - name: Build the executable with PyInstaller
-      env:
-        NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
       run: |
         pyinstaller --onefile --name "${{ matrix.executable_name }}" --add-data "templates${{ matrix.path_separator }}templates" --add-data "Workflow_Diagram.png${{ matrix.path_separator }}." --additional-hooks-dir ".github/hooks" local_app.py
 
